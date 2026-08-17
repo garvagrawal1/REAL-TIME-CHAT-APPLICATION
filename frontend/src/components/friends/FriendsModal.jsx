@@ -91,12 +91,23 @@ export const FriendsModal = ({
       loadData();
     };
 
+    const handleFriendRemoved = ({ removedByName }) => {
+      addToast({
+        type: 'info',
+        title: '👥 Friend List Updated',
+        message: `${removedByName || 'A user'} removed friendship.`,
+      });
+      loadData();
+    };
+
     socket.on('newFriendRequest', handleNewFriendRequest);
     socket.on('friendRequestAccepted', handleFriendRequestAccepted);
+    socket.on('friendRemoved', handleFriendRemoved);
 
     return () => {
       socket.off('newFriendRequest', handleNewFriendRequest);
       socket.off('friendRequestAccepted', handleFriendRequestAccepted);
+      socket.off('friendRemoved', handleFriendRemoved);
     };
   }, [socket, addToast]);
 
@@ -185,19 +196,20 @@ export const FriendsModal = ({
   };
 
   const handleRemoveFriend = async (friendId, friendName) => {
-    if (!window.confirm(`Are you sure you want to remove ${friendName} from your friends?`)) {
+    if (!window.confirm(`Are you sure you want to remove ${friendName} from your friends list?`)) {
       return;
     }
     try {
       setProcessingId(friendId);
-      const data = await friendService.rejectFriendRequest(friendId);
+      const data = await friendService.removeFriend(friendId);
       if (data.success) {
         addToast({ type: 'info', message: `Removed ${friendName} from friends.` });
+        socket?.emit('friendRemoved', { targetUserId: friendId });
         loadData();
         if (searchQuery) handleSearchUsers(searchQuery);
       }
     } catch (err) {
-      addToast({ type: 'info', message: 'Failed to remove friend' });
+      addToast({ type: 'info', message: err.response?.data?.error || 'Failed to remove friend' });
     } finally {
       setProcessingId(null);
     }
@@ -553,8 +565,8 @@ export const FriendsModal = ({
 
                       <div className="flex-shrink-0">
                         {targetUser.relationship === 'friends' ? (
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20">
                               <UserCheck className="w-3.5 h-3.5" /> Friends
                             </span>
                             <button
@@ -563,6 +575,14 @@ export const FriendsModal = ({
                               title="Message"
                             >
                               <MessageSquare className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleRemoveFriend(targetUser._id, targetUser.name)}
+                              disabled={processingId === targetUser._id}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 transition-colors"
+                              title="Remove Friend"
+                            >
+                              <UserX className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         ) : targetUser.relationship === 'pending_sent' ? (

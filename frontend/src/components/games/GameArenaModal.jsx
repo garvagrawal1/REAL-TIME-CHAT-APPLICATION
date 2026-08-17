@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Modal } from '../common/Modal';
 import { Button } from '../common/Button';
 import { Avatar } from '../common/Avatar';
@@ -12,7 +12,8 @@ import {
   Swords,
   Timer,
   CheckCircle2,
-  XCircle,
+  X,
+  Circle,
 } from 'lucide-react';
 
 const TRIVIA_QUESTIONS = [
@@ -43,18 +44,31 @@ export const GameArenaModal = ({
   onClose,
   roomId,
   opponent,
+  isChallenger = true,
+  assignedSymbol = null,
 }) => {
   const { socket, addToast } = useSocket();
   const { user } = useAuth();
 
   const [activeGame, setActiveGame] = useState('tictactoe'); // 'tictactoe' | 'rps' | 'trivia'
 
-  // Tic Tac Toe State
+  // Tic Tac Toe State: Player 1 = 'X', Player 2 = 'O'
+  const mySymbol = assignedSymbol || (isChallenger ? 'X' : 'O');
+  const opponentSymbol = mySymbol === 'X' ? 'O' : 'X';
+
   const [board, setBoard] = useState(Array(9).fill(null));
-  const [isMyTurn, setIsMyTurn] = useState(true);
-  const [mySymbol, setMySymbol] = useState('X');
+  const [isMyTurn, setIsMyTurn] = useState(isChallenger);
   const [winner, setWinner] = useState(null);
   const [scores, setScores] = useState({ me: 0, opponent: 0, draws: 0 });
+
+  // Sync turn state when game opens
+  useEffect(() => {
+    if (isOpen) {
+      setIsMyTurn(isChallenger);
+      setBoard(Array(9).fill(null));
+      setWinner(null);
+    }
+  }, [isOpen, isChallenger]);
 
   // Rock Paper Scissors State
   const [myChoice, setMyChoice] = useState(null);
@@ -66,6 +80,38 @@ export const GameArenaModal = ({
   const [triviaIndex, setTriviaIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [triviaScore, setTriviaScore] = useState(0);
+
+  // Tic Tac Toe Check Winner
+  const checkWinner = useCallback((squares) => {
+    const lines = [
+      [0, 1, 2], [3, 4, 5], [6, 7, 8],
+      [0, 3, 6], [1, 4, 7], [2, 5, 8],
+      [0, 4, 8], [2, 4, 6],
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const [a, b, c] = lines[i];
+      if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
+        const winningSymbol = squares[a];
+        const iWon = winningSymbol === mySymbol;
+        setWinner(iWon ? 'You Win! 🎉' : `${opponent?.name || 'Opponent'} Wins! 🏆`);
+        setScores((prev) => ({
+          ...prev,
+          me: iWon ? prev.me + 1 : prev.me,
+          opponent: !iWon ? prev.opponent + 1 : prev.opponent,
+        }));
+        return true;
+      }
+    }
+
+    if (squares.every((sq) => sq !== null)) {
+      setWinner('Game Draw! 🤝');
+      setScores((prev) => ({ ...prev, draws: prev.draws + 1 }));
+      return true;
+    }
+
+    return false;
+  }, [mySymbol, opponent]);
 
   // Setup game & listen for opponent moves
   useEffect(() => {
@@ -104,7 +150,7 @@ export const GameArenaModal = ({
       socket.off('gameMoveUpdate', handleGameMove);
       socket.off('gameRestarted', handleGameRestarted);
     };
-  }, [socket, roomId, isOpen]);
+  }, [socket, roomId, isOpen, checkWinner, addToast]);
 
   // Evaluate RPS Winner when both have picked
   useEffect(() => {
@@ -125,35 +171,6 @@ export const GameArenaModal = ({
     }
   }, [myChoice, opponentChoice, opponent]);
 
-  // Tic Tac Toe Check Winner
-  const checkWinner = (squares) => {
-    const lines = [
-      [0, 1, 2], [3, 4, 5], [6, 7, 8],
-      [0, 3, 6], [1, 4, 7], [2, 5, 8],
-      [0, 4, 8], [2, 4, 6],
-    ];
-
-    for (let i = 0; i < lines.length; i++) {
-      const [a, b, c] = lines[i];
-      if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
-        const winningSymbol = squares[a];
-        const iWon = winningSymbol === mySymbol;
-        setWinner(iWon ? 'You Win! 🎉' : `${opponent?.name || 'Opponent'} Wins! 🏆`);
-        setScores((prev) => ({
-          ...prev,
-          me: iWon ? prev.me + 1 : prev.me,
-          opponent: !iWon ? prev.opponent + 1 : prev.opponent,
-        }));
-        return;
-      }
-    }
-
-    if (squares.every((sq) => sq !== null)) {
-      setWinner('Game Draw! 🤝');
-      setScores((prev) => ({ ...prev, draws: prev.draws + 1 }));
-    }
-  };
-
   const handleCellClick = (index) => {
     if (board[index] || winner || !isMyTurn) return;
 
@@ -163,7 +180,7 @@ export const GameArenaModal = ({
     setIsMyTurn(false);
     checkWinner(newBoard);
 
-    // Emit move to opponent
+    // Emit move to opponent with exact symbol ('X' or 'O')
     socket?.emit('gameMove', {
       roomId,
       gameType: 'tictactoe',
@@ -174,7 +191,7 @@ export const GameArenaModal = ({
   const resetTicTacToe = () => {
     setBoard(Array(9).fill(null));
     setWinner(null);
-    setIsMyTurn(true);
+    setIsMyTurn(isChallenger);
   };
 
   const handleRestart = () => {
@@ -217,7 +234,7 @@ export const GameArenaModal = ({
       isOpen={isOpen}
       onClose={onClose}
       title="🎮 Multiplayer Game Arena"
-      subtitle={`Live in-chat multiplayer duel with ${opponent?.name || 'your friend'}`}
+      subtitle={`Live in-chat duel with ${opponent?.name || 'your friend'}`}
       maxWidth="lg"
     >
       <div className="space-y-4">
@@ -261,18 +278,44 @@ export const GameArenaModal = ({
             {/* Score & Turn Banner */}
             <div className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-xs">
               <div className="flex items-center gap-2">
-                <span className="font-bold text-indigo-400">You ({mySymbol}):</span>
+                <span className="font-bold text-indigo-400 flex items-center gap-1">
+                  {mySymbol === 'X' ? (
+                    <X className="w-3.5 h-3.5 text-indigo-400" />
+                  ) : (
+                    <Circle className="w-3.5 h-3.5 text-emerald-400" />
+                  )}
+                  You ({mySymbol}):
+                </span>
                 <span className="font-mono text-slate-100 font-bold">{scores.me}</span>
               </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800 text-[11px] font-semibold text-slate-300">
+
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold border ${
+                  winner
+                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                    : isMyTurn
+                    ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30 animate-pulse'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}
+              >
                 {winner ? (
-                  <span className="text-emerald-400 font-bold">{winner}</span>
+                  <span className="font-bold">{winner}</span>
                 ) : (
-                  <span>{isMyTurn ? '👉 Your Turn' : `⏳ ${opponent?.name || "Opponent"}'s Turn`}</span>
+                  <span>
+                    {isMyTurn ? `👉 Your Turn (${mySymbol})` : `⏳ ${opponent?.name || 'Opponent'}'s Turn (${opponentSymbol})`}
+                  </span>
                 )}
               </div>
+
               <div className="flex items-center gap-2">
-                <span className="font-bold text-purple-400">{opponent?.name || 'Friend'} (O):</span>
+                <span className="font-bold text-purple-400 flex items-center gap-1">
+                  {opponentSymbol === 'X' ? (
+                    <X className="w-3.5 h-3.5 text-indigo-400" />
+                  ) : (
+                    <Circle className="w-3.5 h-3.5 text-emerald-400" />
+                  )}
+                  {opponent?.name || 'Friend'} ({opponentSymbol}):
+                </span>
                 <span className="font-mono text-slate-100 font-bold">{scores.opponent}</span>
               </div>
             </div>
@@ -284,15 +327,16 @@ export const GameArenaModal = ({
                   key={idx}
                   onClick={() => handleCellClick(idx)}
                   disabled={cell !== null || winner !== null || !isMyTurn}
-                  className={`w-20 h-20 sm:w-24 sm:h-24 rounded-xl text-3xl font-extrabold flex items-center justify-center transition-all duration-150 border select-none ${
+                  className={`w-20 h-20 sm:w-24 sm:h-24 rounded-xl text-4xl font-extrabold flex items-center justify-center transition-all duration-150 border select-none ${
                     cell === 'X'
-                      ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-400'
+                      ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-400 shadow-lg shadow-indigo-600/20'
                       : cell === 'O'
-                      ? 'bg-purple-600/20 border-purple-500/50 text-purple-400'
-                      : 'bg-slate-900/80 border-slate-800 hover:bg-slate-800/80 hover:border-slate-700 cursor-pointer active:scale-95'
+                      ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400 shadow-lg shadow-emerald-600/20'
+                      : 'bg-slate-900/80 border-slate-800 hover:bg-slate-800/80 hover:border-indigo-500/40 cursor-pointer active:scale-95'
                   } disabled:cursor-not-allowed`}
                 >
-                  {cell}
+                  {cell === 'X' && <X className="w-10 h-10 text-indigo-400" />}
+                  {cell === 'O' && <Circle className="w-9 h-9 text-emerald-400" />}
                 </button>
               ))}
             </div>

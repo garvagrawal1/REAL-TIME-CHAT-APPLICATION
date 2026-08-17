@@ -7,6 +7,8 @@ const {
   getFriendRequests,
   sendFriendRequest,
   acceptFriendRequest,
+  rejectFriendRequest,
+  removeFriend,
   searchUsers,
   getOrCreateDM,
 } = require('./controllers/friendController');
@@ -122,7 +124,20 @@ async function testFriendFlow() {
   await getOrCreateDM(dmStep.req, dmStep.res, dmStep.next);
   console.log('8. DM Channel created:', dmStep.getData()?.room?.name);
 
-  console.log('\n🎉 ALL FRIEND REQUEST ACCEPTANCE & DM TESTS PASSED 100%!');
+  // Step 8: Test Friend Removal (Unfriend)
+  const removeStep = mockReqRes(userAlice, { friendId: userBob._id.toString() });
+  await removeFriend(removeStep.req, removeStep.res, removeStep.next);
+  console.log('9. Alice removed Bob from friends:', removeStep.getData()?.message);
+
+  const aliceFriendsAfter = mockReqRes(userAlice);
+  await getFriends(aliceFriendsAfter.req, aliceFriendsAfter.res, aliceFriendsAfter.next);
+  const remainingAlice = aliceFriendsAfter.getData()?.friends || [];
+  console.log(`10. Alice friends count after removal: ${remainingAlice.length}`);
+  if (remainingAlice.length !== 0) {
+    throw new Error('Alice still has Bob in friends list after removal!');
+  }
+
+  console.log('\n🎉 ALL FRIEND REQUEST, ACCEPTANCE, DM, AND REMOVAL TESTS PASSED 100%!');
   process.exit(0);
 }
 

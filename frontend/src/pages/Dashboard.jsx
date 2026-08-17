@@ -14,6 +14,7 @@ import { CreateRoomModal } from '../components/rooms/CreateRoomModal';
 import { FriendsModal } from '../components/friends/FriendsModal';
 import { IncomingCallModal } from '../components/video/IncomingCallModal';
 import { VideoCallModal } from '../components/video/VideoCallModal';
+import { ScreenShareRequestModal } from '../components/video/ScreenShareRequestModal';
 import { GameArenaModal } from '../components/games/GameArenaModal';
 import { WatchPartyModal } from '../components/theater/WatchPartyModal';
 import { WhiteboardModal } from '../components/whiteboard/WhiteboardModal';
@@ -22,6 +23,7 @@ import { useChat } from '../hooks/useChat';
 import { useSocket } from '../hooks/useSocket';
 import { useAuth } from '../hooks/useAuth';
 import { roomService } from '../services/roomService';
+import { friendService } from '../services/friendService';
 import {
   Bot,
   Sparkles,
@@ -49,17 +51,20 @@ export const Dashboard = () => {
   const [showAIAssistant, setShowAIAssistant] = useState(false);
   const [showFriendsModal, setShowFriendsModal] = useState(false);
 
-  // New Superpowers: Watch Party, Whiteboard & Catch Up
+  // Superpowers: Watch Party, Whiteboard & Catch Up
   const [showWatchPartyModal, setShowWatchPartyModal] = useState(false);
   const [showWhiteboardModal, setShowWhiteboardModal] = useState(false);
   const [showCatchUpModal, setShowCatchUpModal] = useState(false);
 
   // WebRTC Video/Audio Call State
   const [incomingCallData, setIncomingCallData] = useState(null);
-  const [activeVideoCall, setActiveVideoCall] = useState(null); // { targetUser, isIncoming, signalData, callerSocketId, callType }
+  const [activeVideoCall, setActiveVideoCall] = useState(null);
 
-  // Game Arena State
-  const [activeGameArena, setActiveGameArena] = useState(null); // { opponent, roomId }
+  // Screen Share Permission Request State
+  const [incomingScreenShareData, setIncomingScreenShareData] = useState(null);
+
+  // Game Arena State: { opponent, roomId, isChallenger, mySymbol }
+  const [activeGameArena, setActiveGameArena] = useState(null);
 
   const { socket, roomOnlineCount, deleteMessage, addToast } = useSocket();
 
@@ -100,7 +105,7 @@ export const Dashboard = () => {
     sendMessage,
   } = useChat(activeRoom?._id);
 
-  // Real-time Global Listeners for Incoming Video Calls, Game Invites, and Watch Party
+  // Real-time Global Listeners for Calls, Games, Screen Share, and Watch Party
   useEffect(() => {
     if (!socket) return;
 
@@ -109,15 +114,45 @@ export const Dashboard = () => {
       setIncomingCallData(callData);
     };
 
+    const handleIncomingScreenShare = (reqData) => {
+      console.log('[ScreenShare] Incoming screen share request:', reqData);
+      setIncomingScreenShareData(reqData);
+    };
+
+    const handleScreenShareResponse = (resData) => {
+      if (resData.accepted) {
+        addToast({
+          type: 'info',
+          title: '🖥️ Screen Share Accepted',
+          message: `${resData.responderName || 'Friend'} accepted your screen share request!`,
+        });
+        if (activeFriend) {
+          handleStartVideoCall(activeFriend, 'video');
+        }
+      } else {
+        addToast({
+          type: 'info',
+          title: 'Screen Share Declined',
+          message: `${resData.responderName || 'User'} declined the screen share.`,
+        });
+      }
+    };
+
     const handleGameInvitation = (inviteData) => {
       addToast({
         type: 'message',
         title: '🎮 Game Invitation!',
-        message: `${inviteData.challengerName} challenged you to ${inviteData.gameType.toUpperCase()}!`,
+        message: `${inviteData.challengerName} challenged you to ${inviteData.gameType.toUpperCase()}! You are Circle (O).`,
       });
       setActiveGameArena({
-        opponent: { _id: inviteData.challengerId, name: inviteData.challengerName, avatar: inviteData.challengerAvatar },
+        opponent: {
+          _id: inviteData.challengerId,
+          name: inviteData.challengerName,
+          avatar: inviteData.challengerAvatar,
+        },
         roomId: inviteData.roomId || activeRoom?._id,
+        isChallenger: false,
+        assignedSymbol: 'O',
       });
     };
 
@@ -126,21 +161,36 @@ export const Dashboard = () => {
         addToast({
           type: 'info',
           title: '🎬 Watch Party Started',
-          message: `${wpData.updatedBy} loaded a video for everyone! Click Theater to join.`,
+          message: `${wpData.updatedBy} loaded a video for everyone! Click Stream/Watch Party to join.`,
         });
       }
     };
 
+    const handleFriendRemoved = ({ removedByName }) => {
+      addToast({
+        type: 'info',
+        title: '👥 Friend List Updated',
+        message: `${removedByName || 'A user'} removed friendship.`,
+      });
+      fetchRooms();
+    };
+
     socket.on('incomingCall', handleIncomingCall);
+    socket.on('incomingScreenShareRequest', handleIncomingScreenShare);
+    socket.on('screenShareResponse', handleScreenShareResponse);
     socket.on('gameInvitation', handleGameInvitation);
     socket.on('watchPartyUpdate', handleWatchPartyNotice);
+    socket.on('friendRemoved', handleFriendRemoved);
 
     return () => {
       socket.off('incomingCall', handleIncomingCall);
+      socket.off('incomingScreenShareRequest', handleIncomingScreenShare);
+      socket.off('screenShareResponse', handleScreenShareResponse);
       socket.off('gameInvitation', handleGameInvitation);
       socket.off('watchPartyUpdate', handleWatchPartyNotice);
+      socket.off('friendRemoved', handleFriendRemoved);
     };
-  }, [socket, activeRoom, addToast]);
+  }, [socket, activeRoom, activeFriend, addToast, fetchRooms]);
 
   const handleSelectRoom = (room) => {
     setActiveRoom(room);
@@ -152,6 +202,20 @@ export const Dashboard = () => {
     setActiveRoom(dmRoom);
     setActiveFriend(friend);
     setIsSidebarOpen(false);
+  };
+
+  // Direct Click on an Online/Offline user to open chat
+  const handleOpenDirectChatWithUser = async (targetUser) => {
+    try {
+      const targetId = targetUser._id || targetUser.id;
+      const data = await friendService.getOrCreateDM(targetId);
+      if (data.success && data.room) {
+        handleOpenDM(data.room, data.friend || targetUser);
+      }
+    } catch (err) {
+      console.error('Failed to open DM with user:', err);
+      addToast({ type: 'info', message: 'Could not open chat with this user' });
+    }
   };
 
   const handleRoomCreated = (newRoom) => {
@@ -176,14 +240,14 @@ export const Dashboard = () => {
     }
   };
 
-  // Video Call Triggers (120 FPS capable)
+  // Video Call Triggers
   const handleStartVideoCall = (targetFriend, type = 'video') => {
     if (!targetFriend) {
       setShowFriendsModal(true);
       addToast({
         type: 'info',
         title: 'Choose a Friend to Call',
-        message: 'Select any friend or online contact to start a video/audio call!',
+        message: 'Select any friend or online contact to start a call!',
       });
       return;
     }
@@ -221,10 +285,79 @@ export const Dashboard = () => {
     setIncomingCallData(null);
   };
 
-  // Game Arena Trigger
+  // Screen Share Permission Flow
+  const handleRequestScreenShare = (targetFriend) => {
+    const friendToCall = targetFriend || activeFriend;
+    if (!friendToCall) {
+      setShowFriendsModal(true);
+      addToast({
+        type: 'info',
+        title: 'Select a Friend',
+        message: 'Please select a friend or direct chat to share your screen with.',
+      });
+      return;
+    }
+
+    socket?.emit('requestScreenShare', {
+      targetUserId: friendToCall._id,
+      roomId: activeRoom?._id,
+    });
+
+    addToast({
+      type: 'info',
+      title: '🖥️ Screen Share Request Sent',
+      message: `Waiting for ${friendToCall.name} to accept your screen share...`,
+    });
+  };
+
+  const handleAcceptScreenShareRequest = () => {
+    if (!incomingScreenShareData) return;
+
+    socket?.emit('respondScreenShare', {
+      toSocketId: incomingScreenShareData.fromSocketId,
+      targetUserId: incomingScreenShareData.fromUserId,
+      accepted: true,
+    });
+
+    setActiveVideoCall({
+      targetUser: {
+        _id: incomingScreenShareData.fromUserId,
+        name: incomingScreenShareData.fromName,
+        avatar: incomingScreenShareData.fromAvatar,
+      },
+      isIncoming: true,
+      callerSocketId: incomingScreenShareData.fromSocketId,
+      callType: 'video',
+    });
+
+    setIncomingScreenShareData(null);
+  };
+
+  const handleDeclineScreenShareRequest = () => {
+    if (!incomingScreenShareData) return;
+
+    socket?.emit('respondScreenShare', {
+      toSocketId: incomingScreenShareData.fromSocketId,
+      targetUserId: incomingScreenShareData.fromUserId,
+      accepted: false,
+      reason: 'Declined by user',
+    });
+
+    setIncomingScreenShareData(null);
+  };
+
+  // Game Arena Trigger: Player 1 gets 'X' and initial turn
   const handleStartGame = (opponent) => {
     const targetOpponent = opponent || activeFriend;
-    if (!targetOpponent || !activeRoom) return;
+    if (!targetOpponent || !activeRoom) {
+      setShowFriendsModal(true);
+      addToast({
+        type: 'info',
+        title: 'Choose an Opponent',
+        message: 'Open a chat with a friend or choose from the list to challenge them!',
+      });
+      return;
+    }
 
     socket?.emit('inviteGame', {
       opponentId: targetOpponent._id,
@@ -235,7 +368,28 @@ export const Dashboard = () => {
     setActiveGameArena({
       opponent: targetOpponent,
       roomId: activeRoom._id,
+      isChallenger: true,
+      assignedSymbol: 'X',
     });
+  };
+
+  // Remove friend handler from ChatHeader
+  const handleRemoveFriendFromChat = async (friend) => {
+    if (!friend) return;
+    if (!window.confirm(`Are you sure you want to remove ${friend.name} from your friends list?`)) {
+      return;
+    }
+    try {
+      const data = await friendService.removeFriend(friend._id);
+      if (data.success) {
+        addToast({ type: 'info', message: `Removed ${friend.name} from friends.` });
+        socket?.emit('friendRemoved', { targetUserId: friend._id });
+        setActiveFriend(null);
+        fetchRooms();
+      }
+    } catch (err) {
+      addToast({ type: 'info', message: 'Failed to remove friend' });
+    }
   };
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -271,7 +425,7 @@ export const Dashboard = () => {
           <Tv className="w-4 h-4 text-rose-400" />
           <div>
             <p className="text-[11px] font-bold text-rose-200">Watch Party</p>
-            <p className="text-[9px] text-rose-400/80">120 FPS Stream</p>
+            <p className="text-[9px] text-rose-400/80">Video Sync</p>
           </div>
         </button>
 
@@ -296,9 +450,13 @@ export const Dashboard = () => {
         isLoading={isLoadingRooms}
       />
 
-      <OnlineUsers members={activeRoom?.members || []} />
+      {/* Online & Community Members with Tap to Chat */}
+      <OnlineUsers
+        members={activeRoom?.members || []}
+        onSelectUser={handleOpenDirectChatWithUser}
+      />
 
-      {/* AI Assistant Quick Trigger Banner in Sidebar */}
+      {/* AI Assistant Trigger Banner */}
       <button
         onClick={() => setShowAIAssistant(true)}
         className="w-full p-3 rounded-xl bg-gradient-to-r from-indigo-900/40 via-purple-900/40 to-pink-900/30 border border-purple-500/30 hover:border-purple-500/60 flex items-center justify-between text-left transition-all duration-200 group"
@@ -325,7 +483,7 @@ export const Dashboard = () => {
       isSidebarOpen={isSidebarOpen}
       setIsSidebarOpen={setIsSidebarOpen}
     >
-      {/* Top Chat Channel / DM Header */}
+      {/* Top Chat Channel / DM Header with WhatsApp-style icons */}
       <ChatHeader
         room={activeRoom}
         activeFriend={activeFriend}
@@ -337,10 +495,12 @@ export const Dashboard = () => {
         onOpenFriends={() => setShowFriendsModal(true)}
         onStartVideoCall={(friend) => handleStartVideoCall(friend || activeFriend, 'video')}
         onStartAudioCall={(friend) => handleStartVideoCall(friend || activeFriend, 'audio')}
+        onStartScreenShare={handleRequestScreenShare}
         onStartGame={handleStartGame}
         onOpenWatchParty={() => setShowWatchPartyModal(true)}
         onOpenWhiteboard={() => setShowWhiteboardModal(true)}
         onOpenCatchUp={() => setShowCatchUpModal(true)}
+        onRemoveFriend={handleRemoveFriendFromChat}
       />
 
       {/* Main Messages Feed */}
@@ -405,7 +565,7 @@ export const Dashboard = () => {
         onClose={() => setShowAIAssistant(false)}
       />
 
-      {/* 🎬 Watch Party & 120 FPS Stream Theater */}
+      {/* 🎬 Synchronized Watch Party & 120 FPS Stream Theater */}
       <WatchPartyModal
         isOpen={showWatchPartyModal}
         onClose={() => setShowWatchPartyModal(false)}
@@ -438,6 +598,15 @@ export const Dashboard = () => {
         />
       )}
 
+      {/* Screen Sharing Permission Prompt Modal */}
+      {incomingScreenShareData && (
+        <ScreenShareRequestModal
+          requestData={incomingScreenShareData}
+          onAccept={handleAcceptScreenShareRequest}
+          onDecline={handleDeclineScreenShareRequest}
+        />
+      )}
+
       {activeVideoCall && (
         <VideoCallModal
           isOpen={true}
@@ -450,13 +619,15 @@ export const Dashboard = () => {
         />
       )}
 
-      {/* In-Chat Multiplayer Game Arena */}
+      {/* In-Chat Multiplayer Game Arena (Tic-Tac-Toe 'X' and 'O', RPS, Trivia) */}
       {activeGameArena && (
         <GameArenaModal
           isOpen={true}
           onClose={() => setActiveGameArena(null)}
           roomId={activeGameArena.roomId}
           opponent={activeGameArena.opponent}
+          isChallenger={activeGameArena.isChallenger}
+          assignedSymbol={activeGameArena.assignedSymbol}
         />
       )}
     </DashboardLayout>

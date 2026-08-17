@@ -424,12 +424,48 @@ const getOrCreateDM = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Explicitly remove/unfriend a friend
+ * @route   DELETE /api/friends/:friendId or POST /api/friends/remove/:friendId
+ * @access  Private
+ */
+const removeFriend = async (req, res, next) => {
+  try {
+    const { friendId } = req.params;
+    const userId = req.user._id;
+
+    if (String(userId) === String(friendId)) {
+      return next(new ErrorResponse('You cannot remove yourself.', 400));
+    }
+
+    // Delete any friend requests between both users
+    await FriendRequest.deleteMany({
+      $or: [
+        { sender: userId, recipient: friendId },
+        { sender: friendId, recipient: userId },
+      ],
+    });
+
+    // Remove from mutual friends arrays
+    await User.findByIdAndUpdate(userId, { $pull: { friends: friendId } });
+    await User.findByIdAndUpdate(friendId, { $pull: { friends: userId } });
+
+    res.status(200).json({
+      success: true,
+      message: 'Friend removed successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getFriends,
   getFriendRequests,
   sendFriendRequest,
   acceptFriendRequest,
   rejectFriendRequest,
+  removeFriend,
   searchUsers,
   getOrCreateDM,
 };

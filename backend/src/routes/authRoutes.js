@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const {
+  sendOtp,
+  verifyOtp,
   register,
   login,
   getMe,
@@ -12,6 +14,8 @@ const {
   validateLogin,
 } = require('../middleware/validationMiddleware');
 
+router.post('/send-otp', sendOtp);
+router.post('/verify-otp', verifyOtp);
 router.post('/register', validateRegister, register);
 router.post('/login', validateLogin, login);
 router.get('/me', protect, getMe);

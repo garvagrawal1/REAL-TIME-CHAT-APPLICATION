@@ -38,6 +38,12 @@ export const friendService = {
     return response.data;
   },
 
+  // Explicitly remove/unfriend a friend
+  removeFriend: async (friendId) => {
+    const response = await api.delete(`/friends/${friendId}`);
+    return response.data;
+  },
+
   // Open or create a 1-on-1 DM channel
   getOrCreateDM: async (friendId) => {
     const response = await api.post(`/friends/dm/${friendId}`);

@@ -302,6 +302,65 @@ const initSocketHandler = (io) => {
     });
 
     // ==========================================
+    // 8.1 Real-Time Screen Share Permission Signaling
+    // ==========================================
+    socket.on('requestScreenShare', ({ targetUserId, toSocketId, roomId }) => {
+      console.log(`[ScreenShare] ${user.name} requested screen share with user ${targetUserId || toSocketId}`);
+      if (targetUserId) {
+        emitToUser(io, targetUserId, 'incomingScreenShareRequest', {
+          fromUserId: userId,
+          fromSocketId: socket.id,
+          fromName: user.name,
+          fromUsername: user.username,
+          fromAvatar: user.avatar,
+          roomId: roomId ? String(roomId) : undefined,
+        });
+      } else if (toSocketId) {
+        io.to(toSocketId).emit('incomingScreenShareRequest', {
+          fromUserId: userId,
+          fromSocketId: socket.id,
+          fromName: user.name,
+          fromUsername: user.username,
+          fromAvatar: user.avatar,
+          roomId: roomId ? String(roomId) : undefined,
+        });
+      }
+    });
+
+    socket.on('respondScreenShare', ({ toSocketId, targetUserId, accepted, reason }) => {
+      console.log(`[ScreenShare] Response from ${user.name}: ${accepted ? 'ACCEPTED' : 'DECLINED'}`);
+      if (toSocketId) {
+        io.to(toSocketId).emit('screenShareResponse', {
+          accepted,
+          reason,
+          responderUserId: userId,
+          responderName: user.name,
+          responderSocketId: socket.id,
+        });
+      } else if (targetUserId) {
+        emitToUser(io, targetUserId, 'screenShareResponse', {
+          accepted,
+          reason,
+          responderUserId: userId,
+          responderName: user.name,
+          responderSocketId: socket.id,
+        });
+      }
+    });
+
+    socket.on('stopScreenShare', ({ toSocketId, targetUserId, roomId }) => {
+      if (toSocketId) {
+        io.to(toSocketId).emit('screenShareEnded', { fromName: user.name });
+      }
+      if (targetUserId) {
+        emitToUser(io, targetUserId, 'screenShareEnded', { fromName: user.name });
+      }
+      if (roomId) {
+        socket.to(String(roomId)).emit('screenShareEnded', { fromName: user.name });
+      }
+    });
+
+    // ==========================================
     // 9. Real-Time Watch Party & Media Sync
     // ==========================================
     socket.on('watchPartyAction', ({ roomId, action, currentTime, videoUrl }) => {
@@ -355,13 +414,15 @@ const initSocketHandler = (io) => {
     // ==========================================
     // 11. Real-Time Multiplayer Games Engine
     // ==========================================
-    socket.on('inviteGame', ({ opponentId, gameType, roomId }) => {
+    socket.on('inviteGame', ({ opponentId, gameType = 'tictactoe', roomId }) => {
       emitToUser(io, opponentId, 'gameInvitation', {
         challengerId: userId,
         challengerName: user.name,
         challengerAvatar: user.avatar,
         gameType,
         roomId: String(roomId),
+        challengerSymbol: 'X',
+        opponentSymbol: 'O',
       });
     });
 
@@ -394,7 +455,7 @@ const initSocketHandler = (io) => {
     });
 
     // ==========================================
-    // 12. Real-time Friend Request Notifications
+    // 12. Real-time Friend Request & Removal Notifications
     // ==========================================
     socket.on('friendRequestSent', ({ targetUserId }) => {
       emitToUser(io, targetUserId, 'newFriendRequest', {
@@ -409,6 +470,13 @@ const initSocketHandler = (io) => {
         userId,
         userName: user.name,
         userAvatar: user.avatar,
+      });
+    });
+
+    socket.on('friendRemoved', ({ targetUserId }) => {
+      emitToUser(io, targetUserId, 'friendRemoved', {
+        removedById: userId,
+        removedByName: user.name,
       });
     });
 

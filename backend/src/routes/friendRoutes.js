@@ -6,6 +6,7 @@ const {
   sendFriendRequest,
   acceptFriendRequest,
   rejectFriendRequest,
+  removeFriend,
   searchUsers,
   getOrCreateDM,
 } = require('../controllers/friendController');
@@ -19,6 +20,8 @@ router.get('/search', searchUsers);
 router.post('/request/:targetUserId', sendFriendRequest);
 router.post('/accept/:requestId', acceptFriendRequest);
 router.post('/reject/:requestId', rejectFriendRequest);
+router.post('/remove/:friendId', removeFriend);
+router.delete('/:friendId', removeFriend);
 router.post('/dm/:friendId', getOrCreateDM);
 
 module.exports = router;

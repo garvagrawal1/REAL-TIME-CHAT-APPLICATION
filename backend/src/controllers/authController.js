@@ -1,6 +1,100 @@
 const User = require('../models/User');
+const Otp = require('../models/Otp');
 const generateToken = require('../utils/generateToken');
 const ErrorResponse = require('../utils/errorResponse');
+const { sendVerificationOtp } = require('../utils/emailService');
+
+/**
+ * Generate a random 6-digit numeric OTP
+ */
+const generate6DigitOtp = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+/**
+ * @desc    Send 6-digit verification OTP to email
+ * @route   POST /api/auth/send-otp
+ * @access  Public
+ */
+const sendOtp = async (req, res, next) => {
+  try {
+    const { email, name = 'User', type = 'register' } = req.body;
+
+    if (!email || !email.includes('@')) {
+      return next(new ErrorResponse('Please provide a valid email address.', 400));
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+
+    // If registering, check if email is already taken
+    if (type === 'register') {
+      const existingUser = await User.findOne({ email: cleanEmail });
+      if (existingUser) {
+        return next(new ErrorResponse('An account with this email already exists.', 400));
+      }
+    }
+
+    // Delete any previous pending OTP for this email
+    await Otp.deleteMany({ email: cleanEmail });
+
+    // Generate new 6-digit OTP
+    const otpCode = generate6DigitOtp();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
+
+    await Otp.create({
+      email: cleanEmail,
+      otp: otpCode,
+      expiresAt,
+    });
+
+    // Send email via Nodemailer
+    const emailResult = await sendVerificationOtp(cleanEmail, name, otpCode);
+
+    res.status(200).json({
+      success: true,
+      message: `Verification code sent to ${cleanEmail}`,
+      devOtp: emailResult.devOtp || undefined,
+      expiresInMinutes: 10,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Verify 6-digit OTP code
+ * @route   POST /api/auth/verify-otp
+ * @access  Public
+ */
+const verifyOtp = async (req, res, next) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return next(new ErrorResponse('Email and OTP code are required.', 400));
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
+
+    const otpDoc = await Otp.findOne({
+      email: cleanEmail,
+      otp: cleanOtp,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!otpDoc) {
+      return next(new ErrorResponse('Invalid or expired verification code. Please request a new one.', 400));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * @desc    Register a new user
@@ -9,20 +103,41 @@ const ErrorResponse = require('../utils/errorResponse');
  */
 const register = async (req, res, next) => {
   try {
-    const { name, username, email, password, avatar, bio } = req.body;
+    const { name, username, email, password, avatar, bio, otp } = req.body;
 
     // Check if username or email already exists
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanUsername = username.toLowerCase().trim();
+
     const existingUser = await User.findOne({
-      $or: [{ email: email.toLowerCase() }, { username: username.toLowerCase() }],
+      $or: [{ email: cleanEmail }, { username: cleanUsername }],
     });
 
     if (existingUser) {
-      if (existingUser.email === email.toLowerCase()) {
+      if (existingUser.email === cleanEmail) {
         return next(new ErrorResponse('An account with this email already exists.', 400));
       }
-      if (existingUser.username === username.toLowerCase()) {
+      if (existingUser.username === cleanUsername) {
         return next(new ErrorResponse('Username is already taken. Please pick another one.', 400));
       }
+    }
+
+    // Verify OTP if provided (or verify from Otp collection)
+    let isEmailVerified = false;
+    if (otp) {
+      const cleanOtp = String(otp).trim();
+      const otpDoc = await Otp.findOne({
+        email: cleanEmail,
+        otp: cleanOtp,
+        expiresAt: { $gt: new Date() },
+      });
+
+      if (!otpDoc) {
+        return next(new ErrorResponse('Invalid or expired verification code. Please check the code sent to your email.', 400));
+      }
+
+      isEmailVerified = true;
+      await Otp.deleteMany({ email: cleanEmail }); // Clean up after successful use
     }
 
     // Default avatar if not provided (deterministic SVG initials or avatar URL)
@@ -30,12 +145,13 @@ const register = async (req, res, next) => {
 
     const user = await User.create({
       name,
-      username: username.toLowerCase(),
-      email: email.toLowerCase(),
+      username: cleanUsername,
+      email: cleanEmail,
       password,
       avatar: initialAvatar,
       bio: bio || 'Hey there! I am using ChatFlow AI.',
       status: 'online',
+      isEmailVerified,
     });
 
     const token = generateToken(user._id);
@@ -52,6 +168,7 @@ const register = async (req, res, next) => {
         avatar: user.avatar,
         bio: user.bio,
         status: user.status,
+        isEmailVerified: user.isEmailVerified,
         createdAt: user.createdAt,
       },
     });
@@ -159,6 +276,8 @@ const updateProfile = async (req, res, next) => {
 };
 
 module.exports = {
+  sendOtp,
+  verifyOtp,
   register,
   login,
   getMe,
