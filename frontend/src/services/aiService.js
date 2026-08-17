@@ -48,4 +48,22 @@ export const aiService = {
     const response = await api.post('/ai/moderate', { content });
     return response.data;
   },
+
+  // Time-travel Catch Me Up Brief
+  catchUp: async (roomId) => {
+    const response = await api.post('/ai/catch-up', { roomId });
+    return response.data;
+  },
+
+  // AI Explain Code
+  explainCode: async (code, language = 'javascript') => {
+    const response = await api.post('/ai/code/explain', { code, language });
+    return response.data;
+  },
+
+  // AI Fix & Optimize Code
+  fixCode: async (code, language = 'javascript') => {
+    const response = await api.post('/ai/code/fix', { code, language });
+    return response.data;
+  },
 };

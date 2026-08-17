@@ -9,6 +9,9 @@ const {
   searchMessagesAI,
   analyzeSentiment,
   moderateContent,
+  catchUpChat,
+  explainCode,
+  fixCode,
 } = require('../controllers/aiController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -22,5 +25,8 @@ router.post('/translate', translateMessage);
 router.post('/search', searchMessagesAI);
 router.post('/sentiment', analyzeSentiment);
 router.post('/moderate', moderateContent);
+router.post('/catch-up', catchUpChat);
+router.post('/code/explain', explainCode);
+router.post('/code/fix', fixCode);
 
 module.exports = router;

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Avatar } from '../common/Avatar';
 import { formatMessageTime, copyToClipboard } from '../../utils/helpers';
 import { aiService } from '../../services/aiService';
+import { CodeBlockRunner } from '../code/CodeBlockRunner';
 import {
   MoreVertical,
   Languages,
@@ -11,6 +12,8 @@ import {
   Trash2,
   Sparkles,
   Loader2,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 
 export const MessageBubble = ({
@@ -29,6 +32,20 @@ export const MessageBubble = ({
 
   const sender = message.sender || {};
   const senderName = sender.name || sender.username || 'User';
+  const content = message.content || '';
+
+  // Smart Date & Scheduling Detection
+  const hasMeetingIntent =
+    /\b(meeting|call|meet|schedule|zoom|sync|tomorrow|pm|am|tonight|monday|friday|sunday)\b/i.test(
+      content
+    ) && content.length > 5;
+
+  // Code Block Extraction
+  const codeBlockMatch = content.match(/```([a-zA-Z]*)\n([\s\S]*?)```/);
+  const hasCodeBlock = !!codeBlockMatch;
+  const codeLanguage = codeBlockMatch ? codeBlockMatch[1] || 'javascript' : 'javascript';
+  const codeSnippet = codeBlockMatch ? codeBlockMatch[2] : '';
+  const textBeforeCode = hasCodeBlock ? content.split(/```[a-zA-Z]*\n[\s\S]*?```/)[0] : content;
 
   const handleCopy = async () => {
     const success = await copyToClipboard(message.content);
@@ -68,6 +85,13 @@ export const MessageBubble = ({
     } finally {
       setIsAnalyzingSentiment(false);
     }
+  };
+
+  const handleCreateGoogleCalendarEvent = () => {
+    const title = encodeURIComponent(`Discussion with ${senderName}: ${content.substring(0, 40)}`);
+    const details = encodeURIComponent(`Chat message: "${content}"`);
+    const googleCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}`;
+    window.open(googleCalUrl, '_blank');
   };
 
   const sentimentBadges = {
@@ -115,7 +139,7 @@ export const MessageBubble = ({
         </div>
 
         {/* Message Bubble Box */}
-        <div className="relative group/bubble">
+        <div className="relative group/bubble w-full">
           <div
             className={`relative rounded-2xl px-4 py-2.5 text-sm shadow-sm break-words whitespace-pre-wrap leading-relaxed ${
               isOwn
@@ -123,7 +147,26 @@ export const MessageBubble = ({
                 : 'bg-slate-800/90 text-slate-100 border border-slate-700/60 rounded-tl-xs'
             }`}
           >
-            {message.content}
+            {/* Plain text / text before code */}
+            {hasCodeBlock ? textBeforeCode : content}
+
+            {/* Embedded Live Interactive Code Runner */}
+            {hasCodeBlock && (
+              <CodeBlockRunner code={codeSnippet} language={codeLanguage} />
+            )}
+
+            {/* Smart Action / Calendar Suggestion Pill */}
+            {hasMeetingIntent && (
+              <div className="mt-2 pt-2 border-t border-indigo-400/20 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleCreateGoogleCalendarEvent}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-400/30 text-[11px] text-indigo-200 font-semibold transition-all shadow-sm active:scale-95"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>📅 Add to Google Calendar</span>
+                </button>
+              </div>
+            )}
 
             {/* Translation Output */}
             {isTranslating && (

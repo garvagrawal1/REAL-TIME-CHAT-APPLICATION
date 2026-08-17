@@ -15,11 +15,24 @@ import { FriendsModal } from '../components/friends/FriendsModal';
 import { IncomingCallModal } from '../components/video/IncomingCallModal';
 import { VideoCallModal } from '../components/video/VideoCallModal';
 import { GameArenaModal } from '../components/games/GameArenaModal';
+import { WatchPartyModal } from '../components/theater/WatchPartyModal';
+import { WhiteboardModal } from '../components/whiteboard/WhiteboardModal';
+import { CatchUpModal } from '../components/ai/CatchUpModal';
 import { useChat } from '../hooks/useChat';
 import { useSocket } from '../hooks/useSocket';
 import { useAuth } from '../hooks/useAuth';
 import { roomService } from '../services/roomService';
-import { Bot, Sparkles, MessageSquare, Users, Video, Gamepad2 } from 'lucide-react';
+import {
+  Bot,
+  Sparkles,
+  MessageSquare,
+  Users,
+  Video,
+  Gamepad2,
+  Tv,
+  PenTool,
+  Zap,
+} from 'lucide-react';
 
 export const Dashboard = () => {
   const { user } = useAuth();
@@ -35,6 +48,11 @@ export const Dashboard = () => {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showAIAssistant, setShowAIAssistant] = useState(false);
   const [showFriendsModal, setShowFriendsModal] = useState(false);
+
+  // New Superpowers: Watch Party, Whiteboard & Catch Up
+  const [showWatchPartyModal, setShowWatchPartyModal] = useState(false);
+  const [showWhiteboardModal, setShowWhiteboardModal] = useState(false);
+  const [showCatchUpModal, setShowCatchUpModal] = useState(false);
 
   // WebRTC Video/Audio Call State
   const [incomingCallData, setIncomingCallData] = useState(null);
@@ -82,7 +100,7 @@ export const Dashboard = () => {
     sendMessage,
   } = useChat(activeRoom?._id);
 
-  // Real-time Global Listeners for Incoming Video Calls & Game Invites
+  // Real-time Global Listeners for Incoming Video Calls, Game Invites, and Watch Party
   useEffect(() => {
     if (!socket) return;
 
@@ -97,19 +115,30 @@ export const Dashboard = () => {
         title: '🎮 Game Invitation!',
         message: `${inviteData.challengerName} challenged you to ${inviteData.gameType.toUpperCase()}!`,
       });
-      // Set active game arena
       setActiveGameArena({
         opponent: { _id: inviteData.challengerId, name: inviteData.challengerName, avatar: inviteData.challengerAvatar },
         roomId: inviteData.roomId || activeRoom?._id,
       });
     };
 
+    const handleWatchPartyNotice = (wpData) => {
+      if (wpData.action === 'CHANGE_VIDEO') {
+        addToast({
+          type: 'info',
+          title: '🎬 Watch Party Started',
+          message: `${wpData.updatedBy} loaded a video for everyone! Click Theater to join.`,
+        });
+      }
+    };
+
     socket.on('incomingCall', handleIncomingCall);
     socket.on('gameInvitation', handleGameInvitation);
+    socket.on('watchPartyUpdate', handleWatchPartyNotice);
 
     return () => {
       socket.off('incomingCall', handleIncomingCall);
       socket.off('gameInvitation', handleGameInvitation);
+      socket.off('watchPartyUpdate', handleWatchPartyNotice);
     };
   }, [socket, activeRoom, addToast]);
 
@@ -147,9 +176,17 @@ export const Dashboard = () => {
     }
   };
 
-  // Video Call Triggers
+  // Video Call Triggers (120 FPS capable)
   const handleStartVideoCall = (targetFriend, type = 'video') => {
-    if (!targetFriend) return;
+    if (!targetFriend) {
+      setShowFriendsModal(true);
+      addToast({
+        type: 'info',
+        title: 'Choose a Friend to Call',
+        message: 'Select any friend or online contact to start a video/audio call!',
+      });
+      return;
+    }
     setActiveVideoCall({
       targetUser: targetFriend,
       isIncoming: false,
@@ -225,6 +262,31 @@ export const Dashboard = () => {
         </span>
       </button>
 
+      {/* Quick Superpower Actions Bar */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => setShowWatchPartyModal(true)}
+          className="p-2 rounded-xl bg-rose-950/30 hover:bg-rose-950/60 border border-rose-500/30 flex items-center gap-2 text-left transition-all"
+        >
+          <Tv className="w-4 h-4 text-rose-400" />
+          <div>
+            <p className="text-[11px] font-bold text-rose-200">Watch Party</p>
+            <p className="text-[9px] text-rose-400/80">120 FPS Stream</p>
+          </div>
+        </button>
+
+        <button
+          onClick={() => setShowWhiteboardModal(true)}
+          className="p-2 rounded-xl bg-indigo-950/30 hover:bg-indigo-950/60 border border-indigo-500/30 flex items-center gap-2 text-left transition-all"
+        >
+          <PenTool className="w-4 h-4 text-indigo-400" />
+          <div>
+            <p className="text-[11px] font-bold text-indigo-200">Whiteboard</p>
+            <p className="text-[9px] text-indigo-400/80">Live Draw</p>
+          </div>
+        </button>
+      </div>
+
       {/* Room list */}
       <RoomList
         rooms={rooms}
@@ -276,6 +338,9 @@ export const Dashboard = () => {
         onStartVideoCall={(friend) => handleStartVideoCall(friend || activeFriend, 'video')}
         onStartAudioCall={(friend) => handleStartVideoCall(friend || activeFriend, 'audio')}
         onStartGame={handleStartGame}
+        onOpenWatchParty={() => setShowWatchPartyModal(true)}
+        onOpenWhiteboard={() => setShowWhiteboardModal(true)}
+        onOpenCatchUp={() => setShowCatchUpModal(true)}
       />
 
       {/* Main Messages Feed */}
@@ -306,7 +371,7 @@ export const Dashboard = () => {
         disabled={!activeRoom}
       />
 
-      {/* Modals & AI Drawers */}
+      {/* Modals & Superpowers */}
       <FriendsModal
         isOpen={showFriendsModal}
         onClose={() => setShowFriendsModal(false)}
@@ -338,6 +403,30 @@ export const Dashboard = () => {
       <AIChatAssistant
         isOpen={showAIAssistant}
         onClose={() => setShowAIAssistant(false)}
+      />
+
+      {/* 🎬 Watch Party & 120 FPS Stream Theater */}
+      <WatchPartyModal
+        isOpen={showWatchPartyModal}
+        onClose={() => setShowWatchPartyModal(false)}
+        roomId={activeRoom?._id}
+        roomName={activeFriend ? activeFriend.name : activeRoom?.name || 'Channel'}
+      />
+
+      {/* 🎨 Collaborative Real-Time Whiteboard */}
+      <WhiteboardModal
+        isOpen={showWhiteboardModal}
+        onClose={() => setShowWhiteboardModal(false)}
+        roomId={activeRoom?._id}
+        roomName={activeFriend ? activeFriend.name : activeRoom?.name || 'Channel'}
+      />
+
+      {/* ⚡ Instant Time-Travel Catch Up Brief */}
+      <CatchUpModal
+        isOpen={showCatchUpModal}
+        onClose={() => setShowCatchUpModal(false)}
+        roomId={activeRoom?._id}
+        roomName={activeFriend ? activeFriend.name : activeRoom?.name || 'Channel'}
       />
 
       {/* WebRTC Video Call & Incoming Call Modals */}

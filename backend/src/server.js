@@ -30,8 +30,8 @@ const io = new Server(server, {
 // Initialize Socket Handlers
 initSocketHandler(io);
 
-// Start listening
-server.listen(PORT, () => {
+// Start listening on all interfaces (0.0.0.0)
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`=========================================`);
   console.log(`🚀 ChatFlow AI Server running on PORT: ${PORT}`);
   console.log(`📡 Socket.io engine initialized and ready`);

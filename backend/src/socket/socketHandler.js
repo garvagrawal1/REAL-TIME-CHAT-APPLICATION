@@ -12,6 +12,8 @@ const socketUserMap = new Map();
 const socketRoomMap = new Map();
 // roomId -> Map<userId, { name, username }>
 const roomTypingMap = new Map();
+// roomId -> latest Watch Party state
+const roomWatchPartyMap = new Map();
 
 /**
  * Get all unique online user IDs
@@ -103,26 +105,32 @@ const initSocketHandler = (io) => {
     socket.on('joinRoom', async ({ roomId }) => {
       try {
         if (!roomId) return;
+        const targetRoom = String(roomId);
 
         // Leave previous room if any
         const previousRoom = socketRoomMap.get(socket.id);
-        if (previousRoom && previousRoom !== roomId) {
+        if (previousRoom && previousRoom !== targetRoom) {
           socket.leave(previousRoom);
           clearUserTyping(previousRoom, userId, io);
         }
 
-        socket.join(roomId);
-        socketRoomMap.set(socket.id, roomId);
+        socket.join(targetRoom);
+        socketRoomMap.set(socket.id, targetRoom);
 
         // Ensure user is added to room members in DB if not already
-        await Room.findByIdAndUpdate(roomId, {
+        await Room.findByIdAndUpdate(targetRoom, {
           $addToSet: { members: user._id },
         });
 
         // Broadcast updated room online users
-        broadcastRoomUsers(io, roomId);
+        broadcastRoomUsers(io, targetRoom);
 
-        console.log(`[Socket Room] ${user.username} joined room ${roomId}`);
+        // Send current watch party state if active
+        if (roomWatchPartyMap.has(targetRoom)) {
+          socket.emit('watchPartyUpdate', roomWatchPartyMap.get(targetRoom));
+        }
+
+        console.log(`[Socket Room] ${user.username} joined room ${targetRoom}`);
       } catch (err) {
         socket.emit('socketError', { message: `Failed to join room: ${err.message}` });
       }
@@ -132,12 +140,13 @@ const initSocketHandler = (io) => {
     socket.on('leaveRoom', async ({ roomId }) => {
       try {
         if (!roomId) return;
+        const targetRoom = String(roomId);
 
-        socket.leave(roomId);
+        socket.leave(targetRoom);
         socketRoomMap.delete(socket.id);
-        clearUserTyping(roomId, userId, io);
+        clearUserTyping(targetRoom, userId, io);
 
-        broadcastRoomUsers(io, roomId);
+        broadcastRoomUsers(io, targetRoom);
       } catch (err) {
         socket.emit('socketError', { message: `Failed to leave room: ${err.message}` });
       }
@@ -190,7 +199,7 @@ const initSocketHandler = (io) => {
         });
 
         // Clear typing indicator for this user in this room
-        clearUserTyping(roomId, userId, io);
+        clearUserTyping(String(roomId), userId, io);
 
         if (callback) {
           callback({ success: true, message });
@@ -204,23 +213,24 @@ const initSocketHandler = (io) => {
     // 6. Typing Indicators
     socket.on('typing', ({ roomId }) => {
       if (!roomId) return;
+      const targetRoom = String(roomId);
 
-      if (!roomTypingMap.has(roomId)) {
-        roomTypingMap.set(roomId, new Map());
+      if (!roomTypingMap.has(targetRoom)) {
+        roomTypingMap.set(targetRoom, new Map());
       }
-      const roomTyping = roomTypingMap.get(roomId);
+      const roomTyping = roomTypingMap.get(targetRoom);
       roomTyping.set(userId, { name: user.name, username: user.username });
 
       // Broadcast list of typing users to others in the room
-      socket.to(roomId).emit('typingUpdate', {
-        roomId,
+      socket.to(targetRoom).emit('typingUpdate', {
+        roomId: targetRoom,
         typingUsers: Array.from(roomTyping.values()),
       });
     });
 
     socket.on('stopTyping', ({ roomId }) => {
       if (!roomId) return;
-      clearUserTyping(roomId, userId, io);
+      clearUserTyping(String(roomId), userId, io);
     });
 
     // 7. Message Deletion Event
@@ -238,7 +248,7 @@ const initSocketHandler = (io) => {
         }
 
         await msg.deleteOne();
-        io.to(roomId).emit('messageDeleted', { messageId, roomId });
+        io.to(String(roomId)).emit('messageDeleted', { messageId, roomId: String(roomId) });
 
         if (callback) callback({ success: true });
       } catch (err) {
@@ -247,7 +257,7 @@ const initSocketHandler = (io) => {
     });
 
     // ==========================================
-    // 8. WebRTC 1-on-1 Video & Audio Call Signaling
+    // 8. WebRTC 1-on-1 Video & Audio Call Signaling (120 FPS High-Framerate Capable)
     // ==========================================
     socket.on('callUser', ({ userToCall, signalData, callType = 'video' }) => {
       console.log(`[WebRTC] ${user.name} is calling user ${userToCall} (${callType})`);
@@ -292,16 +302,66 @@ const initSocketHandler = (io) => {
     });
 
     // ==========================================
-    // 9. Real-Time Multiplayer Games Engine
+    // 9. Real-Time Watch Party & Media Sync
+    // ==========================================
+    socket.on('watchPartyAction', ({ roomId, action, currentTime, videoUrl }) => {
+      if (!roomId) return;
+      const targetRoom = String(roomId);
+      const payload = {
+        action, // 'PLAY' | 'PAUSE' | 'SEEK' | 'CHANGE_VIDEO' | 'CLOSE'
+        currentTime: currentTime || 0,
+        videoUrl,
+        updatedBy: user.name,
+        timestamp: Date.now(),
+      };
+
+      if (action === 'CLOSE') {
+        roomWatchPartyMap.delete(targetRoom);
+      } else {
+        roomWatchPartyMap.set(targetRoom, payload);
+      }
+
+      socket.to(targetRoom).emit('watchPartyUpdate', payload);
+    });
+
+    // ==========================================
+    // 10. Real-Time Collaborative Whiteboard
+    // ==========================================
+    socket.on('canvasDraw', ({ roomId, strokeData }) => {
+      if (!roomId) return;
+      socket.to(String(roomId)).emit('canvasDrawUpdate', {
+        strokeData,
+        user: { id: userId, name: user.name },
+      });
+    });
+
+    socket.on('canvasClear', ({ roomId }) => {
+      if (!roomId) return;
+      socket.to(String(roomId)).emit('canvasClearUpdate', {
+        clearedBy: user.name,
+      });
+    });
+
+    socket.on('canvasCursor', ({ roomId, x, y }) => {
+      if (!roomId) return;
+      socket.to(String(roomId)).emit('canvasCursorUpdate', {
+        userId,
+        userName: user.name,
+        x,
+        y,
+      });
+    });
+
+    // ==========================================
+    // 11. Real-Time Multiplayer Games Engine
     // ==========================================
     socket.on('inviteGame', ({ opponentId, gameType, roomId }) => {
-      console.log(`[Game] ${user.name} invited ${opponentId} to play ${gameType}`);
       emitToUser(io, opponentId, 'gameInvitation', {
         challengerId: userId,
         challengerName: user.name,
         challengerAvatar: user.avatar,
         gameType,
-        roomId,
+        roomId: String(roomId),
       });
     });
 
@@ -311,12 +371,13 @@ const initSocketHandler = (io) => {
         opponentName: user.name,
         accepted,
         gameType,
-        roomId,
+        roomId: String(roomId),
       });
     });
 
     socket.on('gameMove', ({ roomId, gameType, moveData }) => {
-      socket.to(roomId).emit('gameMoveUpdate', {
+      if (!roomId) return;
+      socket.to(String(roomId)).emit('gameMoveUpdate', {
         moveData,
         player: userId,
         playerName: user.name,
@@ -325,14 +386,15 @@ const initSocketHandler = (io) => {
     });
 
     socket.on('restartGame', ({ roomId, gameType }) => {
-      io.to(roomId).emit('gameRestarted', {
+      if (!roomId) return;
+      io.to(String(roomId)).emit('gameRestarted', {
         gameType,
         restartedBy: user.name,
       });
     });
 
     // ==========================================
-    // 10. Real-time Friend Request Notifications
+    // 12. Real-time Friend Request Notifications
     // ==========================================
     socket.on('friendRequestSent', ({ targetUserId }) => {
       emitToUser(io, targetUserId, 'newFriendRequest', {
@@ -350,7 +412,7 @@ const initSocketHandler = (io) => {
       });
     });
 
-    // 11. Disconnect Handler
+    // 13. Disconnect Handler
     socket.on('disconnect', async (reason) => {
       console.log(`[Socket Disconnected] User ${user.username} on socket ${socket.id}. Reason: ${reason}`);
 

@@ -38,8 +38,16 @@ async function runTests() {
   const translation = await aiService.translateMessage('Hello team, let us start the meeting now', 'Hindi');
   console.log('Translation Result:', translation);
 
-  // 6. Test Models and DB initialization
-  console.log('\n[6/6] Testing Models and DM Channel Schema...');
+  // 6. Test Catch-Up Brief and Code Explainer
+  console.log('\n[6/7] Testing Catch-Up Brief and AI Code Explainer...');
+  const catchUp = await aiService.generateCatchUpBrief(roomMessages, 'Technology');
+  console.log('Catch Up Bullets:', catchUp.bullets);
+
+  const codeExplain = await aiService.explainCodeSnippet('console.log("Hello Antigravity");', 'javascript');
+  console.log('Code Explanation Result:', codeExplain.explanation.substring(0, 100) + '...');
+
+  // 7. Test Models and DB initialization
+  console.log('\n[7/7] Testing Models and DM Channel Schema...');
   const User = require('./models/User');
   const Room = require('./models/Room');
   const FriendRequest = require('./models/FriendRequest');

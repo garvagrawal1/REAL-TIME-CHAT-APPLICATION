@@ -281,6 +281,89 @@ const moderateContent = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Get instant 3-bullet time-travel catch up brief for unread / recent messages
+ * @route   POST /api/ai/catch-up
+ * @access  Private
+ */
+const catchUpChat = async (req, res, next) => {
+  try {
+    const { roomId } = req.body;
+
+    if (!roomId) {
+      return next(new ErrorResponse('Room ID is required', 400));
+    }
+
+    const room = await Room.findById(roomId);
+    if (!room) {
+      return next(new ErrorResponse('Room not found', 404));
+    }
+
+    const messages = await Message.find({ room: roomId })
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .populate('sender', 'name username');
+
+    const result = await aiService.generateCatchUpBrief(messages.reverse(), room.name);
+
+    res.status(200).json({
+      success: true,
+      roomName: room.name,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    AI Code Explainer
+ * @route   POST /api/ai/code/explain
+ * @access  Private
+ */
+const explainCode = async (req, res, next) => {
+  try {
+    const { code, language } = req.body;
+
+    if (!code || !code.trim()) {
+      return next(new ErrorResponse('Code snippet is required', 400));
+    }
+
+    const result = await aiService.explainCodeSnippet(code.trim(), language || 'javascript');
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    AI Code Fixer and Optimizer
+ * @route   POST /api/ai/code/fix
+ * @access  Private
+ */
+const fixCode = async (req, res, next) => {
+  try {
+    const { code, language } = req.body;
+
+    if (!code || !code.trim()) {
+      return next(new ErrorResponse('Code snippet is required', 400));
+    }
+
+    const result = await aiService.fixAndOptimizeCode(code.trim(), language || 'javascript');
+
+    res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   chatWithAI,
   summarizeRoomChat,
@@ -290,4 +373,8 @@ module.exports = {
   searchMessagesAI,
   analyzeSentiment,
   moderateContent,
+  catchUpChat,
+  explainCode,
+  fixCode,
 };
+

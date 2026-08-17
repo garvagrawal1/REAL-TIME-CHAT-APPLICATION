@@ -8,7 +8,7 @@ const roomSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       minlength: [2, 'Room name must be at least 2 characters'],
-      maxlength: [50, 'Room name cannot exceed 50 characters'],
+      maxlength: [100, 'Room name cannot exceed 100 characters'],
       index: true,
     },
     description: {

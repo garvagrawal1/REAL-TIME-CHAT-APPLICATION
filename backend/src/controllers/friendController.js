@@ -4,20 +4,54 @@ const Room = require('../models/Room');
 const ErrorResponse = require('../utils/errorResponse');
 
 /**
- * @desc    Get user's friends list
+ * Helper: Extract unique String IDs from any array of ObjectIds or Objects
+ */
+const extractIdStrings = (arr) => {
+  if (!arr || !Array.isArray(arr)) return [];
+  return arr.map((item) => String(item?._id || item)).filter(Boolean);
+};
+
+/**
+ * @desc    Get user's friends list (Combines User.friends + accepted FriendRequests)
  * @route   GET /api/friends
  * @access  Private
  */
 const getFriends = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id).populate(
+    const userId = req.user._id;
+
+    // 1. Fetch user with populated friends
+    const currentUser = await User.findById(userId).populate(
       'friends',
       'name username email avatar status lastSeen bio'
     );
 
+    let friendsList = (currentUser?.friends || []).filter(Boolean);
+    const friendIdsSet = new Set(friendsList.map((f) => String(f._id)));
+
+    // 2. Also check any FriendRequest with status: 'accepted' to guarantee zero missed friends
+    const acceptedRequests = await FriendRequest.find({
+      $or: [{ sender: userId }, { recipient: userId }],
+      status: 'accepted',
+    }).populate('sender recipient', 'name username email avatar status lastSeen bio');
+
+    for (const reqItem of acceptedRequests) {
+      const otherUser =
+        String(reqItem.sender?._id || reqItem.sender) === String(userId)
+          ? reqItem.recipient
+          : reqItem.sender;
+
+      if (otherUser && otherUser._id && !friendIdsSet.has(String(otherUser._id))) {
+        friendsList.push(otherUser);
+        friendIdsSet.add(String(otherUser._id));
+        // Sync back to User document
+        await User.findByIdAndUpdate(userId, { $addToSet: { friends: otherUser._id } });
+      }
+    }
+
     res.status(200).json({
       success: true,
-      friends: user?.friends || [],
+      friends: friendsList,
     });
   } catch (error) {
     next(error);
@@ -45,8 +79,8 @@ const getFriendRequests = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      incoming,
-      outgoing,
+      incoming: incoming.filter((r) => r.sender), // Filter out deleted accounts
+      outgoing: outgoing.filter((r) => r.recipient),
     });
   } catch (error) {
     next(error);
@@ -72,12 +106,18 @@ const sendFriendRequest = async (req, res, next) => {
       return next(new ErrorResponse('User not found.', 404));
     }
 
-    // Check if already friends
-    if (req.user.friends && req.user.friends.includes(targetUserId)) {
-      return next(new ErrorResponse('You are already friends with this user.', 400));
+    // Check if already friends in User document
+    const currentUser = await User.findById(senderId);
+    const friendIds = extractIdStrings(currentUser?.friends);
+    if (friendIds.includes(String(targetUserId))) {
+      return res.status(200).json({
+        success: true,
+        message: `You are already friends with ${targetUser.name}!`,
+        isFriends: true,
+      });
     }
 
-    // Check if a request already exists in either direction
+    // Check existing request in either direction
     const existingRequest = await FriendRequest.findOne({
       $or: [
         { sender: senderId, recipient: targetUserId },
@@ -86,11 +126,27 @@ const sendFriendRequest = async (req, res, next) => {
     });
 
     if (existingRequest) {
+      if (existingRequest.status === 'accepted') {
+        // Ensure both users have each other in friends array
+        await User.findByIdAndUpdate(senderId, { $addToSet: { friends: targetUserId } });
+        await User.findByIdAndUpdate(targetUserId, { $addToSet: { friends: senderId } });
+
+        return res.status(200).json({
+          success: true,
+          message: `You are already friends with ${targetUser.name}!`,
+          isFriends: true,
+        });
+      }
+
       if (existingRequest.status === 'pending') {
         if (String(existingRequest.sender) === String(senderId)) {
-          return next(new ErrorResponse('Friend request already sent.', 400));
+          return res.status(200).json({
+            success: true,
+            message: 'Friend request already sent and pending.',
+            request: existingRequest,
+          });
         } else {
-          // If they sent us a request, auto-accept it!
+          // If the target user had sent us a request, auto-accept it!
           existingRequest.status = 'accepted';
           await existingRequest.save();
 
@@ -104,11 +160,22 @@ const sendFriendRequest = async (req, res, next) => {
             autoAccepted: true,
           });
         }
-      } else if (existingRequest.status === 'accepted') {
-        return next(new ErrorResponse('You are already friends with this user.', 400));
       }
+
+      // If rejected earlier, reactivate to pending
+      existingRequest.sender = senderId;
+      existingRequest.recipient = targetUserId;
+      existingRequest.status = 'pending';
+      await existingRequest.save();
+
+      return res.status(200).json({
+        success: true,
+        message: `Friend request sent to ${targetUser.name}!`,
+        request: existingRequest,
+      });
     }
 
+    // Create new pending request
     const newRequest = await FriendRequest.create({
       sender: senderId,
       recipient: targetUserId,
@@ -128,7 +195,7 @@ const sendFriendRequest = async (req, res, next) => {
 };
 
 /**
- * @desc    Accept a friend request
+ * @desc    Accept a friend request (By RequestId OR TargetUserId)
  * @route   POST /api/friends/accept/:requestId
  * @access  Private
  */
@@ -137,7 +204,18 @@ const acceptFriendRequest = async (req, res, next) => {
     const { requestId } = req.params;
     const userId = req.user._id;
 
-    const request = await FriendRequest.findById(requestId);
+    // Support lookup by either FriendRequest._id OR target User._id
+    let request = await FriendRequest.findById(requestId);
+
+    if (!request) {
+      // Try finding pending request where sender is requestId and recipient is current user
+      request = await FriendRequest.findOne({
+        sender: requestId,
+        recipient: userId,
+        status: 'pending',
+      });
+    }
+
     if (!request) {
       return next(new ErrorResponse('Friend request not found.', 404));
     }
@@ -166,7 +244,7 @@ const acceptFriendRequest = async (req, res, next) => {
 };
 
 /**
- * @desc    Reject / Cancel a friend request
+ * @desc    Reject / Cancel / Delete a friend request or unfriend
  * @route   POST /api/friends/reject/:requestId
  * @access  Private
  */
@@ -175,23 +253,35 @@ const rejectFriendRequest = async (req, res, next) => {
     const { requestId } = req.params;
     const userId = req.user._id;
 
-    const request = await FriendRequest.findById(requestId);
+    // Check if requestId is a FriendRequest ID or a User ID to unfriend
+    let request = await FriendRequest.findById(requestId);
+
     if (!request) {
-      return next(new ErrorResponse('Friend request not found.', 404));
+      request = await FriendRequest.findOne({
+        $or: [
+          { sender: userId, recipient: requestId },
+          { sender: requestId, recipient: userId },
+        ],
+      });
     }
 
-    if (
-      String(request.recipient) !== String(userId) &&
-      String(request.sender) !== String(userId)
-    ) {
-      return next(new ErrorResponse('Not authorized to modify this request.', 403));
+    if (request) {
+      await request.deleteOne();
     }
 
-    await request.deleteOne();
+    // Also remove from mutual friends arrays if they were friends
+    const targetUserId = request
+      ? String(request.sender) === String(userId)
+        ? request.recipient
+        : request.sender
+      : requestId;
+
+    await User.findByIdAndUpdate(userId, { $pull: { friends: targetUserId } });
+    await User.findByIdAndUpdate(targetUserId, { $pull: { friends: userId } });
 
     res.status(200).json({
       success: true,
-      message: 'Friend request removed.',
+      message: 'Friend relationship removed successfully.',
     });
   } catch (error) {
     next(error);
@@ -199,7 +289,7 @@ const rejectFriendRequest = async (req, res, next) => {
 };
 
 /**
- * @desc    Search users with friendship status tags
+ * @desc    Search users with live friendship status tags
  * @route   GET /api/friends/search
  * @access  Private
  */
@@ -220,16 +310,24 @@ const searchUsers = async (req, res, next) => {
 
     const users = await User.find(userQuery)
       .select('name username avatar status bio lastSeen')
-      .limit(30);
+      .limit(50);
 
-    // Fetch active requests involving current user
-    const pendingRequests = await FriendRequest.find({
+    // Fetch all requests involving current user (both pending and accepted)
+    const allRequests = await FriendRequest.find({
       $or: [{ sender: currentUserId }, { recipient: currentUserId }],
-      status: 'pending',
     });
 
     const currentUser = await User.findById(currentUserId).select('friends');
-    const friendsSet = new Set((currentUser?.friends || []).map((id) => String(id)));
+    const friendsSet = new Set(extractIdStrings(currentUser?.friends));
+
+    // Also add any users with accepted requests into friendsSet
+    allRequests
+      .filter((r) => r.status === 'accepted')
+      .forEach((r) => {
+        const otherId =
+          String(r.sender) === String(currentUserId) ? String(r.recipient) : String(r.sender);
+        friendsSet.add(otherId);
+      });
 
     const results = users.map((u) => {
       const uId = String(u._id);
@@ -239,10 +337,11 @@ const searchUsers = async (req, res, next) => {
       if (friendsSet.has(uId)) {
         relationship = 'friends';
       } else {
-        const reqItem = pendingRequests.find(
+        const reqItem = allRequests.find(
           (r) =>
-            (String(r.sender) === String(currentUserId) && String(r.recipient) === uId) ||
-            (String(r.recipient) === String(currentUserId) && String(r.sender) === uId)
+            r.status === 'pending' &&
+            ((String(r.sender) === String(currentUserId) && String(r.recipient) === uId) ||
+              (String(r.recipient) === String(currentUserId) && String(r.sender) === uId))
         );
 
         if (reqItem) {

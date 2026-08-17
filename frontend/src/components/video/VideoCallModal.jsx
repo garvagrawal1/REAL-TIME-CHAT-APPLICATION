@@ -11,12 +11,16 @@ import {
   Maximize2,
   Minimize2,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 
 const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
 };
 
@@ -42,6 +46,9 @@ export const VideoCallModal = ({
   const localStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const remoteSocketIdRef = useRef(callerSocketId);
+  const pendingLocalCandidatesRef = useRef([]);
+  const pendingRemoteCandidatesRef = useRef([]);
+  const isRemoteDescriptionSetRef = useRef(false);
   const timerRef = useRef(null);
 
   // Initialize WebRTC and Local Media Stream
@@ -87,13 +94,18 @@ export const VideoCallModal = ({
           }
         };
 
-        // Handle ICE candidates
+        // Handle local ICE candidates gathering
         pc.onicecandidate = (event) => {
-          if (event.candidate && remoteSocketIdRef.current) {
-            socket?.emit('iceCandidate', {
-              toSocketId: remoteSocketIdRef.current,
-              candidate: event.candidate,
-            });
+          if (event.candidate) {
+            if (remoteSocketIdRef.current) {
+              socket?.emit('iceCandidate', {
+                toSocketId: remoteSocketIdRef.current,
+                candidate: event.candidate,
+              });
+            } else {
+              // Buffer candidate until callAccepted event brings responder socket ID
+              pendingLocalCandidatesRef.current.push(event.candidate);
+            }
           }
         };
 
@@ -113,6 +125,18 @@ export const VideoCallModal = ({
         if (isIncoming && incomingSignalData && callerSocketId) {
           remoteSocketIdRef.current = callerSocketId;
           await pc.setRemoteDescription(new RTCSessionDescription(incomingSignalData));
+          isRemoteDescriptionSetRef.current = true;
+
+          // Flush any buffered remote candidates
+          while (pendingRemoteCandidatesRef.current.length > 0) {
+            const cand = pendingRemoteCandidatesRef.current.shift();
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.warn('Queued candidate add error:', e.message);
+            }
+          }
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
 
@@ -124,7 +148,7 @@ export const VideoCallModal = ({
       } catch (err) {
         console.error('WebRTC initialization error:', err);
         setCallStatus(`Error: ${err.message}`);
-        addToast({ type: 'info', message: 'Could not access camera/mic.' });
+        addToast({ type: 'info', message: 'Could not access camera/mic: ' + err.message });
       }
     };
 
@@ -148,6 +172,28 @@ export const VideoCallModal = ({
       if (peerConnectionRef.current) {
         try {
           await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(signal));
+          isRemoteDescriptionSetRef.current = true;
+
+          // Flush buffered local candidates to receiver
+          if (pendingLocalCandidatesRef.current.length > 0) {
+            pendingLocalCandidatesRef.current.forEach((candidate) => {
+              socket?.emit('iceCandidate', {
+                toSocketId: responderSocketId,
+                candidate,
+              });
+            });
+            pendingLocalCandidatesRef.current = [];
+          }
+
+          // Flush buffered remote candidates
+          while (pendingRemoteCandidatesRef.current.length > 0) {
+            const cand = pendingRemoteCandidatesRef.current.shift();
+            try {
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.warn('Queued candidate add error on caller:', e.message);
+            }
+          }
         } catch (err) {
           console.error('Failed to set remote description on caller:', err);
         }
@@ -155,12 +201,17 @@ export const VideoCallModal = ({
     };
 
     const handleIceCandidate = async ({ candidate }) => {
-      if (peerConnectionRef.current && candidate) {
+      if (!candidate) return;
+
+      if (peerConnectionRef.current && isRemoteDescriptionSetRef.current) {
         try {
           await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
           console.error('Failed to add ICE candidate:', err);
         }
+      } else {
+        // Queue candidate until remote description is set
+        pendingRemoteCandidatesRef.current.push(candidate);
       }
     };
 
@@ -247,7 +298,19 @@ export const VideoCallModal = ({
 
     if (!isScreenSharing) {
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 60, max: 120 },
+            width: { ideal: 1920, max: 2560 },
+            height: { ideal: 1080, max: 1440 },
+            cursor: 'always',
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
         const screenTrack = screenStream.getVideoTracks()[0];
 
         const senders = peerConnectionRef.current.getSenders();
@@ -267,6 +330,11 @@ export const VideoCallModal = ({
         };
 
         setIsScreenSharing(true);
+        addToast({
+          type: 'info',
+          title: '⚡ 120 FPS Screen Share',
+          message: 'Sharing your screen at high refresh rate!',
+        });
       } catch (err) {
         console.warn('Screen share error:', err.message);
       }
@@ -385,15 +453,15 @@ export const VideoCallModal = ({
               {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
             </button>
 
-            {/* Screen Share Button */}
+            {/* 120 FPS Screen Share Button */}
             <button
               onClick={toggleScreenShare}
               className={`p-3 rounded-xl transition-colors ${
                 isScreenSharing
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
                   : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
               }`}
-              title={isScreenSharing ? 'Stop Screen Share' : 'Share Screen'}
+              title={isScreenSharing ? 'Stop Screen Share' : 'Share Screen (120 FPS)'}
             >
               <Monitor className="w-5 h-5" />
             </button>

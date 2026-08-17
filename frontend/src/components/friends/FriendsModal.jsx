@@ -9,6 +9,7 @@ import {
   Users,
   UserPlus,
   UserCheck,
+  UserX,
   Search,
   MessageSquare,
   Video,
@@ -18,6 +19,7 @@ import {
   Clock,
   Loader2,
   Sparkles,
+  UserCheck2,
 } from 'lucide-react';
 
 export const FriendsModal = ({
@@ -35,6 +37,7 @@ export const FriendsModal = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [processingId, setProcessingId] = useState(null);
 
   const { onlineUsers, socket, addToast } = useSocket();
 
@@ -71,12 +74,20 @@ export const FriendsModal = ({
     if (!socket) return;
 
     const handleNewFriendRequest = ({ senderName }) => {
-      addToast({ type: 'info', message: `${senderName} sent you a friend request!` });
+      addToast({
+        type: 'info',
+        title: '👥 Friend Request',
+        message: `${senderName || 'Someone'} sent you a friend request!`,
+      });
       loadData();
     };
 
     const handleFriendRequestAccepted = ({ userName }) => {
-      addToast({ type: 'info', message: `${userName} accepted your friend request!` });
+      addToast({
+        type: 'info',
+        title: '🎉 Request Accepted!',
+        message: `${userName || 'Your friend'} accepted your friend request!`,
+      });
       loadData();
     };
 
@@ -111,39 +122,84 @@ export const FriendsModal = ({
 
   const handleSendRequest = async (targetUserId) => {
     try {
+      setProcessingId(targetUserId);
       const data = await friendService.sendFriendRequest(targetUserId);
       if (data.success) {
         addToast({ type: 'info', message: data.message });
         socket?.emit('friendRequestSent', { targetUserId });
+        if (data.autoAccepted || data.isFriends) {
+          socket?.emit('friendRequestAccepted', { senderId: targetUserId });
+          setActiveTab('all');
+        }
         handleSearchUsers(searchQuery);
         loadData();
       }
     } catch (err) {
       addToast({ type: 'info', message: err.response?.data?.error || 'Failed to send friend request' });
+    } finally {
+      setProcessingId(null);
     }
   };
 
   const handleAcceptRequest = async (requestId, senderId) => {
+    const idToUse = requestId || senderId;
+    if (!idToUse) return;
+
     try {
-      const data = await friendService.acceptFriendRequest(requestId);
+      setProcessingId(idToUse);
+      const data = await friendService.acceptFriendRequest(idToUse);
       if (data.success) {
-        addToast({ type: 'info', message: data.message });
-        socket?.emit('friendRequestAccepted', { senderId });
+        addToast({
+          type: 'info',
+          title: '🎉 Friends Now!',
+          message: data.message || 'Friend request accepted!',
+        });
+        socket?.emit('friendRequestAccepted', { senderId: senderId || requestId });
+        // Optimistically switch to all friends tab to show the new friend
+        setActiveTab('all');
         loadData();
+        if (searchQuery) handleSearchUsers(searchQuery);
       }
     } catch (err) {
+      console.error('Accept error:', err);
       addToast({ type: 'info', message: err.response?.data?.error || 'Failed to accept request' });
+    } finally {
+      setProcessingId(null);
     }
   };
 
   const handleRejectRequest = async (requestId) => {
     try {
+      setProcessingId(requestId);
       const data = await friendService.rejectFriendRequest(requestId);
       if (data.success) {
+        addToast({ type: 'info', message: 'Friend request removed.' });
         loadData();
+        if (searchQuery) handleSearchUsers(searchQuery);
       }
     } catch (err) {
       addToast({ type: 'info', message: 'Failed to update request' });
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId, friendName) => {
+    if (!window.confirm(`Are you sure you want to remove ${friendName} from your friends?`)) {
+      return;
+    }
+    try {
+      setProcessingId(friendId);
+      const data = await friendService.rejectFriendRequest(friendId);
+      if (data.success) {
+        addToast({ type: 'info', message: `Removed ${friendName} from friends.` });
+        loadData();
+        if (searchQuery) handleSearchUsers(searchQuery);
+      }
+    } catch (err) {
+      addToast({ type: 'info', message: 'Failed to remove friend' });
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -193,7 +249,7 @@ export const FriendsModal = ({
             }`}
           >
             <Users className="w-3.5 h-3.5" />
-            <span>All ({friends.length})</span>
+            <span>All Friends ({friends.length})</span>
           </button>
 
           <button
@@ -207,7 +263,7 @@ export const FriendsModal = ({
             <Clock className="w-3.5 h-3.5" />
             <span>Pending</span>
             {incomingRequests.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+              <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-bold animate-pulse">
                 {incomingRequests.length}
               </span>
             )}
@@ -296,6 +352,15 @@ export const FriendsModal = ({
                         >
                           <Gamepad2 className="w-4 h-4" />
                         </button>
+
+                        <button
+                          onClick={() => handleRemoveFriend(friend._id, friend.name)}
+                          disabled={processingId === friend._id}
+                          className="p-2 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 transition-colors"
+                          title="Remove Friend"
+                        >
+                          <UserX className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -307,7 +372,7 @@ export const FriendsModal = ({
                     {activeTab === 'online' ? 'No friends currently online' : 'No friends added yet'}
                   </p>
                   <p className="text-xs text-slate-500 max-w-xs mt-1 mb-4">
-                    Switch to the "Add Friend" tab to discover registered users!
+                    Switch to the "Add Friend" tab to discover registered users and send requests!
                   </p>
                   <Button
                     variant="ai"
@@ -327,44 +392,55 @@ export const FriendsModal = ({
             <div className="space-y-4">
               {/* Incoming */}
               <div>
-                <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                  Incoming Requests ({incomingRequests.length})
+                <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                  <span>Incoming Requests</span>
+                  <span className="px-1.5 py-0.2 rounded-full bg-indigo-600 text-white text-[10px]">
+                    {incomingRequests.length}
+                  </span>
                 </h5>
                 {incomingRequests.length > 0 ? (
                   <div className="space-y-2">
                     {incomingRequests.map((req) => (
                       <div
                         key={req._id}
-                        className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-800"
+                        className="flex items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-indigo-500/30 shadow-md shadow-indigo-950/30"
                       >
                         <div className="flex items-center gap-3">
                           <Avatar
                             name={req.sender?.name}
                             avatar={req.sender?.avatar}
                             size="sm"
+                            isOnline={onlineUsers.has(String(req.sender?._id))}
+                            showStatus={true}
                           />
                           <div>
-                            <p className="text-xs font-bold text-slate-200">{req.sender?.name}</p>
-                            <p className="text-[10px] text-slate-400 font-mono">@{req.sender?.username}</p>
+                            <p className="text-xs font-bold text-slate-100">{req.sender?.name}</p>
+                            <p className="text-[10px] text-indigo-400 font-mono">@{req.sender?.username}</p>
+                            {req.sender?.bio && (
+                              <p className="text-[10px] text-slate-500 truncate max-w-xs">{req.sender?.bio}</p>
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-2">
                           <Button
                             variant="primary"
                             size="sm"
                             onClick={() => handleAcceptRequest(req._id, req.sender?._id)}
+                            disabled={processingId === req._id}
                             icon={Check}
-                            className="!px-2.5 !py-1 text-xs"
+                            className="!px-3 !py-1 text-xs shadow-md shadow-indigo-600/30"
                           >
-                            Accept
+                            {processingId === req._id ? 'Accepting...' : 'Accept'}
                           </Button>
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => handleRejectRequest(req._id)}
+                            disabled={processingId === req._id}
                             icon={X}
                             className="!p-1 text-slate-400 hover:text-rose-400"
+                            title="Decline Request"
                           />
                         </div>
                       </div>
@@ -377,8 +453,11 @@ export const FriendsModal = ({
 
               {/* Outgoing */}
               <div>
-                <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                  Sent Requests ({outgoingRequests.length})
+                <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                  <span>Sent Requests</span>
+                  <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 text-[10px]">
+                    {outgoingRequests.length}
+                  </span>
                 </h5>
                 {outgoingRequests.length > 0 ? (
                   <div className="space-y-2">
@@ -392,6 +471,8 @@ export const FriendsModal = ({
                             name={req.recipient?.name}
                             avatar={req.recipient?.avatar}
                             size="sm"
+                            isOnline={onlineUsers.has(String(req.recipient?._id))}
+                            showStatus={true}
                           />
                           <div>
                             <p className="text-xs font-bold text-slate-300">{req.recipient?.name}</p>
@@ -401,10 +482,11 @@ export const FriendsModal = ({
 
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] text-amber-400 font-medium px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20">
-                            Pending
+                            Pending Response
                           </span>
                           <button
                             onClick={() => handleRejectRequest(req._id)}
+                            disabled={processingId === req._id}
                             className="text-xs text-slate-400 hover:text-rose-400 transition-colors"
                           >
                             Cancel
@@ -437,7 +519,7 @@ export const FriendsModal = ({
               {isSearching ? (
                 <div className="py-8 flex flex-col items-center justify-center gap-2 text-indigo-400 text-xs">
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Searching users...</span>
+                  <span>Searching registered users...</span>
                 </div>
               ) : searchResults.length > 0 ? (
                 <div className="space-y-2">
@@ -471,9 +553,18 @@ export const FriendsModal = ({
 
                       <div className="flex-shrink-0">
                         {targetUser.relationship === 'friends' ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
-                            <UserCheck className="w-3.5 h-3.5" /> Friends
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                              <UserCheck className="w-3.5 h-3.5" /> Friends
+                            </span>
+                            <button
+                              onClick={() => handleOpenDirectChat(targetUser)}
+                              className="p-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition-colors"
+                              title="Message"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         ) : targetUser.relationship === 'pending_sent' ? (
                           <span className="text-[11px] font-medium text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20">
                             Request Sent
@@ -483,20 +574,22 @@ export const FriendsModal = ({
                             variant="primary"
                             size="sm"
                             onClick={() => handleAcceptRequest(targetUser.requestId, targetUser._id)}
+                            disabled={processingId === targetUser.requestId || processingId === targetUser._id}
                             icon={Check}
                             className="!py-1 !px-2.5 text-xs"
                           >
-                            Accept
+                            {processingId === targetUser.requestId ? 'Accepting...' : 'Accept'}
                           </Button>
                         ) : (
                           <Button
                             variant="ai"
                             size="sm"
                             onClick={() => handleSendRequest(targetUser._id)}
+                            disabled={processingId === targetUser._id}
                             icon={UserPlus}
                             className="!py-1 !px-2.5 text-xs"
                           >
-                            Add Friend
+                            {processingId === targetUser._id ? 'Sending...' : 'Add Friend'}
                           </Button>
                         )}
                       </div>
@@ -509,7 +602,7 @@ export const FriendsModal = ({
                 </div>
               ) : (
                 <div className="py-6 text-center text-xs text-slate-500">
-                  Type a name or username above to find other users to connect with!
+                  Type a name or username above to find registered users!
                 </div>
               )}
             </div>
