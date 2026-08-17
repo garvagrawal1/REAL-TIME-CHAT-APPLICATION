@@ -224,7 +224,7 @@ export const Register = () => {
               <Input
                 label="Full Name"
                 id="register-name"
-                placeholder="Garv Agarwal"
+                placeholder="Enter your full name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 icon={User}
@@ -235,7 +235,7 @@ export const Register = () => {
               <Input
                 label="Username"
                 id="register-username"
-                placeholder="garv_dev"
+                placeholder="Enter your username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                 icon={AtSign}
@@ -246,7 +246,7 @@ export const Register = () => {
                 label="Email Address"
                 id="register-email"
                 type="email"
-                placeholder="garv@example.com"
+                placeholder="Enter your email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 icon={Mail}
@@ -258,7 +258,7 @@ export const Register = () => {
                   label="Password"
                   id="register-password"
                   isPassword={true}
-                  placeholder="At least 6 characters"
+                  placeholder="Enter a strong password (min 6 characters)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   icon={Lock}
@@ -286,7 +286,7 @@ export const Register = () => {
                 label="Confirm Password"
                 id="register-confirm"
                 isPassword={true}
-                placeholder="Repeat password"
+                placeholder="Confirm your password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 icon={Lock}

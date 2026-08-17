@@ -66,6 +66,7 @@ export const FriendsModal = ({
   useEffect(() => {
     if (isOpen) {
       loadData();
+      handleSearchUsers(searchQuery || '');
     }
   }, [isOpen]);
 
@@ -111,16 +112,11 @@ export const FriendsModal = ({
     };
   }, [socket, addToast]);
 
-  const handleSearchUsers = async (query) => {
+  const handleSearchUsers = async (query = '') => {
     setSearchQuery(query);
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
     setIsSearching(true);
     try {
-      const data = await friendService.searchUsers(query.trim());
+      const data = await friendService.searchUsers(query ? query.trim() : '');
       if (data.success) {
         setSearchResults(data.users || []);
       }
@@ -130,6 +126,12 @@ export const FriendsModal = ({
       setIsSearching(false);
     }
   };
+
+  useEffect(() => {
+    if (activeTab === 'add') {
+      handleSearchUsers(searchQuery || '');
+    }
+  }, [activeTab]);
 
   const handleSendRequest = async (targetUserId) => {
     try {
@@ -617,12 +619,22 @@ export const FriendsModal = ({
                   ))}
                 </div>
               ) : searchQuery ? (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  No users found matching "{searchQuery}".
+                <div className="py-8 text-center space-y-1">
+                  <p className="text-xs font-semibold text-slate-300">
+                    No users found matching "{searchQuery}"
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Try searching by full name, username (e.g. without @), or email address.
+                  </p>
                 </div>
               ) : (
-                <div className="py-6 text-center text-xs text-slate-500">
-                  Type a name or username above to find registered users!
+                <div className="py-8 text-center space-y-1">
+                  <p className="text-xs font-semibold text-slate-300">
+                    No other registered users yet
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Invite your friends to register and they will appear here!
+                  </p>
                 </div>
               )}
             </div>

@@ -80,7 +80,7 @@ export const Login = () => {
               label="Email Address"
               id="login-email"
               type="email"
-              placeholder="you@example.com"
+              placeholder="Enter your email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               icon={Mail}
@@ -92,7 +92,7 @@ export const Login = () => {
               label="Password"
               id="login-password"
               isPassword={true}
-              placeholder="••••••••"
+              placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               icon={Lock}

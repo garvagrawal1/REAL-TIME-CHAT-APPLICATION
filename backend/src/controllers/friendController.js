@@ -301,10 +301,12 @@ const searchUsers = async (req, res, next) => {
     let userQuery = { _id: { $ne: currentUserId } };
 
     if (q && q.trim()) {
+      const cleanQ = q.trim().replace(/^@/, '');
+      const escapedQ = cleanQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       userQuery.$or = [
-        { name: { $regex: q.trim(), $options: 'i' } },
-        { username: { $regex: q.trim(), $options: 'i' } },
-        { email: { $regex: q.trim(), $options: 'i' } },
+        { name: { $regex: escapedQ, $options: 'i' } },
+        { username: { $regex: escapedQ, $options: 'i' } },
+        { email: { $regex: escapedQ, $options: 'i' } },
       ];
     }
 
